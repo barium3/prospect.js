@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <title>矢量绘图工具</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.17/paper-full.min.js"></script>
+    <link rel="stylesheet" href="styles/main.css" />
+  </head>
+  <body>
+    <canvas id="canvas" resize></canvas>
+    <div class="toolbar">
+      <div class="tool-button" id="circleButton">
+        <svg viewBox="0 0 24 24">
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+            fill="none"
+            stroke="#333"
+            stroke-width="2"
+          />
+        </svg>
+      </div>
+      <div class="tool-button" id="rectangleButton">
+        <svg viewBox="0 0 24 24">
+          <rect
+            x="4"
+            y="4"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="#333"
+            stroke-width="2"
+          />
+        </svg>
+      </div>
+      <div class="tool-button" id="selectButton">
+        <svg viewBox="0 0 24 24">
+          <path
+            d="M7,2L17,12L7,22L7,2Z"
+            fill="none"
+            stroke="#333"
+            stroke-width="2"
+          />
+        </svg>
+      </div>
+    </div>
+
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>
