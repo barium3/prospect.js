@@ -10,13 +10,20 @@ export class SelectTool {
       stroke: true,
       fill: true,
       tolerance: 5,
+      match: (result) => {
+        if (result.item?.data?.isRotationHandle) return true;
+        if (result.item?.parent === this.selectionUI) return false;
+        return true;
+      },
     };
     this.isDraggingSelection = false;
     this.isSelectingBox = false;
-    this.selectedSegments = [];
-    this.segmentMode = false;
+    this.isRotating = false;
+    this.rotationCenter = null;
+    this.initialAngle = null;
 
     this.initializeEvents();
+    this.initializeKeyEvents();
   }
 
   initializeEvents() {
@@ -26,75 +33,92 @@ export class SelectTool {
     this.tool.onMouseMove = (event) => this.onMouseMove(event);
   }
 
-  createSelectionUI(items, segments = null) {
+  initializeKeyEvents() {
+    document.addEventListener("keydown", (event) => this.onKeyDown(event));
+  }
+
+  onKeyDown(event) {
+    if (event.key === "Delete" || event.key === "Backspace") {
+      if (this.selectedItems.length > 0) {
+        this.deleteSelectedItems();
+      }
+    }
+  }
+
+  deleteSelectedItems() {
+    this.selectedItems.forEach((item) => {
+      item.remove();
+    });
+    this.selectedItems = [];
+    this.removeSelectionUI();
+  }
+
+  // 选择管理相关方法
+  clearSelection() {
+    this.selectedItems.forEach((item) => (item.selected = false));
+    this.selectedItems = [];
+    this.removeSelectionUI();
+  }
+
+  addToSelection(item) {
+    if (!this.selectedItems.includes(item)) {
+      this.selectedItems.push(item);
+      item.selected = true;
+    }
+  }
+
+  removeFromSelection(item) {
+    const index = this.selectedItems.indexOf(item);
+    if (index !== -1) {
+      item.selected = false;
+      this.selectedItems.splice(index, 1);
+    }
+  }
+
+  // UI 相关方法
+  createSelectionUI(items) {
     this.removeSelectionUI();
 
-    // 创建一个组来包含所有UI元素
+    if (!items?.length) return;
+
     this.selectionUI = new paper.Group();
 
-    if (segments && segments.length > 0) {
-      // 为选中的锚点创建高亮框
+    let totalBounds = items[0].bounds.clone();
+    items.forEach((item) => {
+      if (item?.bounds) {
+        totalBounds = totalBounds.unite(item.bounds);
+      }
+    });
 
-      // 计算选中锚点的边界
-      let minX = segments[0].point.x;
-      let minY = segments[0].point.y;
-      let maxX = segments[0].point.x;
-      let maxY = segments[0].point.y;
+    const selectionRect = new paper.Path.Rectangle({
+      rectangle: totalBounds,
+      strokeColor: "#4285f4",
+      strokeWidth: 1,
+      dashArray: [4, 4],
+      selected: false,
+      fillColor: null,
+      name: "selectionRect",
+    });
 
-      segments.forEach((segment) => {
-        minX = Math.min(minX, segment.point.x);
-        minY = Math.min(minY, segment.point.y);
-        maxX = Math.max(maxX, segment.point.x);
-        maxY = Math.max(maxY, segment.point.y);
-      });
+    const rotationHandle = new paper.Path.Circle({
+      center: totalBounds.topCenter.add(new paper.Point(0, -40)),
+      radius: 12,
+      fillColor: "#4285f4",
+      strokeColor: "white",
+      strokeWidth: 2,
+      name: "rotationHandle",
+      data: { isRotationHandle: true },
+    });
 
-      // 创建一个矩形选择框
-      const selectionRect = new paper.Path.Rectangle({
-        from: new paper.Point(minX - 4, minY - 4),
-        to: new paper.Point(maxX + 4, maxY + 4),
-        strokeColor: "#4285f4",
-        strokeWidth: 1,
-        dashArray: [4, 4],
-        selected: false,
-        fillColor: null,
-        name: "selectionRect",
-      });
-      this.selectionUI.addChild(selectionRect);
+    const rotationLine = new paper.Path.Line({
+      from: totalBounds.topCenter,
+      to: rotationHandle.position,
+      strokeColor: "#4285f4",
+      strokeWidth: 1,
+      name: "rotationLine",
+    });
 
-      // 为每个选中的锚点创建一个小方块
-      segments.forEach((segment) => {
-        const segmentSquare = new paper.Path.Rectangle({
-          center: segment.point,
-          size: [8, 8],
-          strokeColor: "#4285f4",
-          fillColor: "#fff",
-          strokeWidth: 1,
-          name: "segmentSquare",
-        });
-        this.selectionUI.addChild(segmentSquare);
-      });
-    } else if (items && items.length > 0) {
-      // 原有的对象选择框逻辑
-      let totalBounds = items[0].bounds.clone();
-      items.forEach((item) => {
-        if (item && item.bounds) {
-          totalBounds = totalBounds.unite(item.bounds);
-        }
-      });
-
-      const selectionRect = new paper.Path.Rectangle({
-        rectangle: totalBounds,
-        strokeColor: "#4285f4",
-        strokeWidth: 1,
-        dashArray: [4, 4],
-        selected: false,
-        fillColor: null,
-        name: "selectionRect",
-      });
-
-      this.selectionUI.addChild(selectionRect);
-    }
-
+    this.selectionUI.addChildren([selectionRect, rotationHandle, rotationLine]);
     this.selectionUI.selectedItems = items;
     this.selectionUI.bringToFront();
   }
@@ -107,226 +131,205 @@ export class SelectTool {
   }
 
   updateSelectionUI() {
-    if (this.segmentMode && this.selectedSegments.length > 0) {
-      // 更新锚点选择框
-      this.createSelectionUI(null, this.selectedSegments);
-    } else if (this.selectedItems.length > 0 && this.selectionUI) {
-      // 更新对象选择框
-      let totalBounds = this.selectedItems[0].bounds.clone();
-      this.selectedItems.forEach((item) => {
-        if (item && item.bounds) {
-          totalBounds = totalBounds.unite(item.bounds);
-        }
-      });
+    if (!this.selectedItems.length || !this.selectionUI) return;
 
-      const selectionRect = this.selectionUI.children.find(
-        (child) => child.name === "selectionRect"
-      );
-      if (selectionRect) {
-        selectionRect.bounds = totalBounds;
+    let totalBounds = this.selectedItems[0].bounds.clone();
+    this.selectedItems.forEach((item) => {
+      if (item?.bounds) {
+        totalBounds = totalBounds.unite(item.bounds);
       }
+    });
+
+    const selectionRect = this.selectionUI.children.find(
+      (child) => child.name === "selectionRect"
+    );
+    if (selectionRect) {
+      selectionRect.bounds = totalBounds;
     }
   }
 
+  // 鼠标事件处理
   onMouseDown(event) {
-    console.log("onMouseDown called with point:", event.point);
     this.dragStart = event.point;
-    const isCommandKey = event.modifiers.command || event.modifiers.control;
-
     const hitResult = paper.project.hitTest(event.point, this.hitOptions);
 
-    // 首先检查是否点击在选择框内
-    const isClickInSelection =
-      this.selectionUI &&
-      this.selectionUI.bounds.contains(event.point) &&
-      (this.selectedItems.length > 0 || this.selectedSegments.length > 0);
+    if (hitResult?.item?.data?.isRotationHandle) {
+      this.handleHitResult(hitResult, event);
+      return;
+    }
 
-    if (isClickInSelection) {
-      console.log("Clicked inside selection UI");
+    const isClickInSelection =
+      this.selectionUI?.bounds.contains(event.point) &&
+      this.selectedItems.length > 0;
+
+    if (isClickInSelection && !event.modifiers.shift) {
       this.isDraggingSelection = true;
       return;
     }
 
     if (hitResult) {
-      // 如果点击的是UI元素的一部分，忽略它
-      if (this.selectionUI && this.selectionUI.isAncestor(hitResult.item)) {
-        console.log("Clicked on selection UI element");
-        return;
-      }
-
-      if (!event.modifiers.shift) {
-        // 清除之前的所有选择（包括对象和锚点）
-        this.selectedItems.forEach((item) => (item.selected = false));
-        this.selectedItems = [];
-        this.selectedSegments.forEach((segment) => (segment.selected = false));
-        this.selectedSegments = [];
-        this.removeSelectionUI();
-      }
-
-      // 根据是否按下cmd键决定选择锚点还是整个对象
-      if (isCommandKey && hitResult.type === "segment") {
-        // 选择锚点
-        hitResult.segment.selected = true;
-        if (!this.selectedSegments.includes(hitResult.segment)) {
-          this.selectedSegments.push(hitResult.segment);
-        }
-        this.segmentMode = true;
-        this.createSelectionUI(null, this.selectedSegments);
-      } else {
-        // 选择整个对象
-        if (!this.selectedItems.includes(hitResult.item)) {
-          this.selectedItems.push(hitResult.item);
-          hitResult.item.selected = true;
-        }
-        this.createSelectionUI(this.selectedItems);
-        this.segmentMode = false;
-      }
-      this.isDraggingSelection = true;
+      this.handleHitResult(hitResult, event);
     } else {
-      // 点击空白处，开始框选
-      if (!event.modifiers.shift) {
-        // 清除所有选择
-        this.selectedItems.forEach((item) => (item.selected = false));
-        this.selectedItems = [];
-        this.selectedSegments.forEach((segment) => (segment.selected = false));
-        this.selectedSegments = [];
-        this.removeSelectionUI();
-      }
-
-      this.isSelectingBox = true;
-      this.isSegmentSelectionMode = isCommandKey; // 记录是否是锚点选择模式
-
-      this.dragRect = new paper.Path({
-        segments: [event.point, event.point, event.point, event.point],
-        closed: true,
-        strokeColor: "blue",
-        strokeWidth: 1,
-        dashArray: [5, 5],
-        fillColor: new paper.Color(0, 0, 1, 0.1),
-        guide: true,
-      });
+      this.handleEmptyClick(event);
     }
   }
 
-  onMouseDrag(event) {
-    if (this.isSelectingBox && this.dragRect) {
-      // 更新框选区域
-      const topLeft = new paper.Point(
-        Math.min(this.dragStart.x, event.point.x),
-        Math.min(this.dragStart.y, event.point.y)
-      );
-      const bottomRight = new paper.Point(
-        Math.max(this.dragStart.x, event.point.x),
-        Math.max(this.dragStart.y, event.point.y)
-      );
-
-      this.dragRect.segments[0].point = topLeft;
-      this.dragRect.segments[1].point = new paper.Point(
-        bottomRight.x,
-        topLeft.y
-      );
-      this.dragRect.segments[2].point = bottomRight;
-      this.dragRect.segments[3].point = new paper.Point(
-        topLeft.x,
-        bottomRight.y
-      );
+  handleHitResult(hitResult, event) {
+    if (hitResult.item?.data?.isRotationHandle) {
+      this.isRotating = true;
+      this.isDraggingSelection = false;
+      this.rotationCenter = this.getSelectionCenter();
+      this.initialAngle = this.getAngle(event.point);
       return;
     }
 
-    // 处理拖动（对象或锚点）
-    if (this.isDraggingSelection) {
-      if (this.segmentMode && this.selectedSegments.length > 0) {
-        // 移动选中的锚点
-        this.selectedSegments.forEach((segment) => {
-          segment.point = segment.point.add(event.delta);
-        });
-        // 更新锚点选择框
-        this.updateSelectionUI();
-      } else if (this.selectedItems.length > 0) {
-        // 移动选中的对象
-        this.selectedItems.forEach((item) => {
-          item.position = item.position.add(event.delta);
-        });
-        // 更新对象选择框的位置
-        if (this.selectionUI) {
-          this.selectionUI.position = this.selectionUI.position.add(
-            event.delta
-          );
-        }
+    if (this.selectionUI?.isAncestor(hitResult.item)) return;
+
+    if (event.modifiers.shift) {
+      // 切换选择状态
+      if (this.selectedItems.includes(hitResult.item)) {
+        this.removeFromSelection(hitResult.item);
+      } else {
+        this.addToSelection(hitResult.item);
       }
-      paper.view.update();
+      this.isDraggingSelection = false;
+    } else {
+      this.clearSelection();
+      this.addToSelection(hitResult.item);
+      this.isDraggingSelection = true;
+    }
+
+    if (this.selectedItems.length > 0) {
+      this.createSelectionUI(this.selectedItems);
     }
   }
 
-  onMouseUp(event) {
+  handleEmptyClick(event) {
+    if (!event.modifiers.shift) {
+      this.clearSelection();
+    }
+
+    this.isSelectingBox = true;
+    this.dragRect = new paper.Path({
+      segments: [event.point, event.point, event.point, event.point],
+      closed: true,
+      strokeColor: "blue",
+      strokeWidth: 1,
+      dashArray: [5, 5],
+      fillColor: new paper.Color(0, 0, 1, 0.1),
+      guide: true,
+    });
+  }
+
+  onMouseDrag(event) {
+    if (this.isRotating && this.rotationCenter) {
+      const currentAngle = this.getAngle(event.point);
+      const rotation = currentAngle - this.initialAngle;
+
+      const originalCenter = this.getSelectionCenter();
+
+      this.selectedItems.forEach((item) => {
+        const itemCenter = item.position;
+        const offset = itemCenter.subtract(this.rotationCenter);
+        offset.angle += rotation;
+        item.rotate(rotation, this.rotationCenter);
+      });
+
+      this.selectionUI.rotate(rotation, this.rotationCenter);
+
+      this.initialAngle = currentAngle;
+
+      paper.view.update();
+      return;
+    }
+
     if (this.isSelectingBox && this.dragRect) {
-      const isCommandKey = event.modifiers.command || event.modifiers.control;
+      this.updateDragRect(event);
+    } else if (this.isDraggingSelection && this.selectedItems.length > 0) {
+      this.moveSelection(event.delta);
+    }
+  }
 
-      if (isCommandKey) {
-        // CMD框选：选择锚点
-        paper.project.activeLayer.children.forEach((item) => {
-          if (item.segments) {
-            item.segments.forEach((segment) => {
-              if (this.dragRect.bounds.contains(segment.point)) {
-                segment.selected = true;
-                if (!this.selectedSegments.includes(segment)) {
-                  this.selectedSegments.push(segment);
-                }
-              }
-            });
-          }
-        });
+  updateDragRect(event) {
+    const topLeft = new paper.Point(
+      Math.min(this.dragStart.x, event.point.x),
+      Math.min(this.dragStart.y, event.point.y)
+    );
+    const bottomRight = new paper.Point(
+      Math.max(this.dragStart.x, event.point.x),
+      Math.max(this.dragStart.y, event.point.y)
+    );
 
-        if (this.selectedSegments.length > 0) {
-          this.segmentMode = true;
-          this.createSelectionUI(null, this.selectedSegments);
-        }
-      } else {
-        // 普通框选：选择整个对象
-        const items = paper.project.getItems({
-          overlapping: this.dragRect.bounds,
-        });
+    this.dragRect.segments[0].point = topLeft;
+    this.dragRect.segments[1].point = new paper.Point(bottomRight.x, topLeft.y);
+    this.dragRect.segments[2].point = bottomRight;
+    this.dragRect.segments[3].point = new paper.Point(topLeft.x, bottomRight.y);
+  }
 
-        const actualItems = items.filter(
-          (item) =>
-            item instanceof paper.Path &&
-            item !== this.dragRect &&
-            item !== this.selectionUI &&
-            !this.selectionUI?.isAncestor(item)
-        );
+  moveSelection(delta) {
+    this.selectedItems.forEach((item) => {
+      item.position = item.position.add(delta);
+    });
+    if (this.selectionUI) {
+      this.selectionUI.position = this.selectionUI.position.add(delta);
+    }
+    paper.view.update();
+  }
 
-        actualItems.forEach((item) => {
-          if (!this.selectedItems.includes(item)) {
-            this.selectedItems.push(item);
-            item.selected = true;
-          }
-        });
+  onMouseUp(event) {
+    if (this.isRotating) {
+      this.isRotating = false;
+      this.rotationCenter = null;
+      this.initialAngle = null;
+      return;
+    }
 
-        if (this.selectedItems.length > 0) {
-          this.segmentMode = false;
-          this.createSelectionUI(this.selectedItems);
-        }
-      }
-
-      this.dragRect.remove();
-      this.dragRect = null;
-      this.isSelectingBox = false;
+    if (this.isSelectingBox && this.dragRect) {
+      this.handleBoxSelection();
     }
 
     this.isDraggingSelection = false;
     this.dragStart = null;
   }
 
-  onMouseMove(event) {
-    if (this.isDraggingSelection && this.selectedItems.length > 0) {
-      document.body.style.cursor = "move";
-    } else {
-      // 如果鼠标在任何选中对象上方，显示移动光标
-      const isOverSelected = this.selectedItems.some((item) =>
-        item.contains(event.point)
-      );
-      document.body.style.cursor = isOverSelected ? "move" : "default";
+  handleBoxSelection() {
+    const items = paper.project.getItems({
+      overlapping: this.dragRect.bounds,
+    });
+
+    const actualItems = items.filter(
+      (item) =>
+        item instanceof paper.Path &&
+        item !== this.dragRect &&
+        item !== this.selectionUI &&
+        !this.selectionUI?.isAncestor(item)
+    );
+
+    actualItems.forEach((item) => this.addToSelection(item));
+
+    if (this.selectedItems.length > 0) {
+      this.createSelectionUI(this.selectedItems);
     }
+
+    this.dragRect.remove();
+    this.dragRect = null;
+    this.isSelectingBox = false;
+  }
+
+  onMouseMove(event) {
+    const hitResult = paper.project.hitTest(event.point, this.hitOptions);
+    const isOverRotationHandle = hitResult?.item?.data?.isRotationHandle;
+
+    if (isOverRotationHandle) {
+      document.body.style.cursor = "rotate";
+      return;
+    }
+
+    const shouldShowMoveCursor =
+      (this.isDraggingSelection && this.selectedItems.length > 0) ||
+      this.selectedItems.some((item) => item.contains(event.point));
+
+    document.body.style.cursor = shouldShowMoveCursor ? "move" : "default";
   }
 
   activate() {
@@ -335,35 +338,32 @@ export class SelectTool {
   }
 
   deactivate() {
-    // 清除所有选中状态
-    if (this.selectedItems) {
-      this.selectedItems.forEach((item) => {
-        if (item) {
-          item.selected = false;
-        }
-      });
-      this.selectedItems = [];
-    }
-
-    // 清除选中的锚点
-    if (this.selectedSegments) {
-      this.selectedSegments.forEach((segment) => {
-        if (segment) {
-          segment.selected = false;
-        }
-      });
-      this.selectedSegments = [];
-    }
-
-    // 移除选择框UI
-    this.removeSelectionUI();
-
-    // 重置所有状态
+    this.clearSelection();
     this.isDraggingSelection = false;
     this.isSelectingBox = false;
     this.dragRect = null;
     this.dragStart = null;
-    this.segmentMode = false;
-    this.selectedSegment = null;
+    document.removeEventListener("keydown", this.onKeyDown);
+  }
+
+  getSelectionCenter() {
+    if (!this.selectedItems.length) return null;
+    let bounds = this.selectedItems[0].bounds.clone();
+    this.selectedItems.forEach((item) => {
+      bounds = bounds.unite(item.bounds);
+    });
+    return bounds.center;
+  }
+
+  getAngle(point) {
+    if (!this.rotationCenter) return 0;
+    return (
+      (Math.atan2(
+        point.y - this.rotationCenter.y,
+        point.x - this.rotationCenter.x
+      ) *
+        180) /
+      Math.PI
+    );
   }
 }
