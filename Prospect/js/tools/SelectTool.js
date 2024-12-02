@@ -28,6 +28,9 @@ export class SelectTool {
     this.initialPoint = null;
     this.initialRatio = null;
     this.scaleCenter = null;
+    this.dragStartPositions = null;
+    this.axisLines = null;
+    this.activeAxis = null;
 
     this.initializeEvents();
     this.initializeKeyEvents();
@@ -49,6 +52,33 @@ export class SelectTool {
       if (this.selectedItems.length > 0) {
         this.deleteSelectedItems();
       }
+      return;
+    }
+
+    if (this.selectedItems.length > 0) {
+      const moveDistance = event.shiftKey ? 100 : 10;
+      let delta = new paper.Point(0, 0);
+
+      switch (event.key) {
+        case "ArrowLeft":
+          delta.x = -moveDistance;
+          break;
+        case "ArrowRight":
+          delta.x = moveDistance;
+          break;
+        case "ArrowUp":
+          delta.y = -moveDistance;
+          break;
+        case "ArrowDown":
+          delta.y = moveDistance;
+          break;
+        default:
+          return;
+      }
+
+      event.preventDefault();
+
+      this.moveSelection(delta);
     }
   }
 
@@ -179,8 +209,12 @@ export class SelectTool {
       this.selectionUI?.bounds.contains(event.point) &&
       this.selectedItems.length > 0;
 
-    if (isClickInSelection && !event.modifiers.shift) {
+    if (isClickInSelection) {
       this.isDraggingSelection = true;
+      this.dragStartPositions = this.selectedItems.map((item) => ({
+        item: item,
+        position: item.position.clone(),
+      }));
       return;
     }
 
@@ -277,7 +311,22 @@ export class SelectTool {
     if (this.isSelectingBox && this.dragRect) {
       this.updateDragRect(event);
     } else if (this.isDraggingSelection && this.selectedItems.length > 0) {
-      this.moveSelection(event.delta);
+      if (!this.dragStartPositions) {
+        this.dragStartPositions = this.selectedItems.map((item) => ({
+          item: item,
+          position: item.position.clone(),
+        }));
+      }
+
+      if (event.modifiers.shift) {
+        if (!this.axisLines && this.dragStartPositions.length > 0) {
+          this.createAxisLines(this.dragStartPositions[0].position);
+        }
+        this.handleAxisConstrainedMove(event);
+      } else {
+        this.moveSelection(event.delta);
+        this.removeAxisLines();
+      }
     }
   }
 
@@ -329,6 +378,9 @@ export class SelectTool {
     }
 
     this.isDraggingSelection = false;
+    this.dragStartPositions = null;
+    this.removeAxisLines();
+    this.activeAxis = null;
     this.dragStart = null;
   }
 
@@ -679,5 +731,119 @@ export class SelectTool {
     }
 
     return null;
+  }
+
+  handleAxisConstrainedMove(event) {
+    if (!this.dragStartPositions || this.dragStartPositions.length === 0)
+      return;
+
+    const mousePoint = event.point;
+    // 计算所有选中对象的中心点作为起始参考点
+    const selectionCenter = this.getSelectionCenter();
+    const startPoint = this.dragStart;
+
+    const distToVertical = Math.abs(mousePoint.x - startPoint.x);
+    const distToHorizontal = Math.abs(mousePoint.y - startPoint.y);
+
+    this.activeAxis = distToVertical < distToHorizontal ? "y" : "x";
+
+    // 计算移动的增量
+    const delta = new paper.Point(0, 0);
+    if (this.activeAxis === "x") {
+      delta.x = mousePoint.x - startPoint.x; // 水平移动
+    } else {
+      delta.y = mousePoint.y - startPoint.y; // 垂直移动
+    }
+
+    // 移动所有选中的项
+    this.dragStartPositions.forEach(({ item, position }) => {
+      item.position = position.add(delta);
+    });
+
+    // 重新创建选择框
+    this.createSelectionUI(this.selectedItems);
+
+    // 更新参考线位置
+    if (this.axisLines) {
+      const viewSize = paper.view.size;
+      const verticalLine = this.axisLines.children.find(
+        (c) => c.name === "verticalAxis"
+      );
+      const horizontalLine = this.axisLines.children.find(
+        (c) => c.name === "horizontalAxis"
+      );
+
+      if (verticalLine) {
+        verticalLine.segments[0].point.x = selectionCenter.x;
+        verticalLine.segments[1].point.x = selectionCenter.x;
+      }
+      if (horizontalLine) {
+        horizontalLine.segments[0].point.y = selectionCenter.y;
+        horizontalLine.segments[1].point.y = selectionCenter.y;
+      }
+    }
+
+    this.highlightActiveAxis();
+    paper.view.update();
+  }
+
+  createAxisLines(startPoint) {
+    this.removeAxisLines();
+
+    // 使用选区中心点而不是起始点
+    const selectionCenter = this.getSelectionCenter();
+    this.axisLines = new paper.Group();
+
+    const viewSize = paper.view.size;
+
+    const verticalLine = new paper.Path.Line({
+      from: new paper.Point(selectionCenter.x, 0),
+      to: new paper.Point(selectionCenter.x, viewSize.height),
+      strokeColor: "#4285f4",
+      strokeWidth: 1,
+      dashArray: [4, 4],
+      opacity: 0.5,
+      name: "verticalAxis",
+    });
+
+    const horizontalLine = new paper.Path.Line({
+      from: new paper.Point(0, selectionCenter.y),
+      to: new paper.Point(viewSize.width, selectionCenter.y),
+      strokeColor: "#4285f4",
+      strokeWidth: 1,
+      dashArray: [4, 4],
+      opacity: 0.5,
+      name: "horizontalAxis",
+    });
+
+    this.axisLines.addChildren([verticalLine, horizontalLine]);
+  }
+
+  highlightActiveAxis() {
+    if (!this.axisLines) return;
+
+    const verticalLine = this.axisLines.children.find(
+      (c) => c.name === "verticalAxis"
+    );
+    const horizontalLine = this.axisLines.children.find(
+      (c) => c.name === "horizontalAxis"
+    );
+
+    if (this.activeAxis === "y") {
+      // 修改这里：当activeAxis为y时高亮垂直线
+      verticalLine.opacity = 0.8;
+      horizontalLine.opacity = 0.2;
+    } else {
+      // 当activeAxis为x时高亮水平线
+      verticalLine.opacity = 0.2;
+      horizontalLine.opacity = 0.8;
+    }
+  }
+
+  removeAxisLines() {
+    if (this.axisLines) {
+      this.axisLines.remove();
+      this.axisLines = null;
+    }
   }
 }
