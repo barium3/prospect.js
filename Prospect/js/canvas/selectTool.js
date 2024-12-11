@@ -7,10 +7,9 @@ export class SelectTool {
     this.selectedItems = [];
     this.dragStartPoint = null;
     this.isDragging = false;
-    this.currentAction = null; // 'move', 'scale', 'rotate', 'dragSelect'
+    this.currentAction = null; // 'move', 'scale', 'rotate'
     this.originalBounds = null;
     this.originalStates = new Map(); // 存储操作开始时的状态
-    this.dragSelectRect = null; // 框选矩形
     this.hasActuallyMoved = false; // 标记实际发生了移动
 
     this.canvas.setSelectTool(this);
@@ -88,21 +87,10 @@ export class SelectTool {
         this.isDragging = true;
         this.saveOriginalStates();
       } else {
-        // 点击了空白区域，开始框选
+        // 点击空白区域，清除选择
         if (!event.modifiers.shift) {
           this.clearSelection();
         }
-        this.currentAction = "dragSelect";
-        this.dragStartPoint = event.point;
-        this.dragSelectRect = new paper.Path.Rectangle({
-          from: event.point,
-          to: event.point,
-          strokeColor: "#005BBB",
-          strokeWidth: 1,
-          dashArray: [4, 4],
-          fillColor: new paper.Color(0, 91, 187, 0.1),
-          name: "drag-select-rect",
-        });
       }
     }
   }
@@ -163,46 +151,20 @@ export class SelectTool {
   }
 
   handleMouseUp(event) {
-    if (this.currentAction === "dragSelect" && this.dragSelectRect) {
-      // 框选完成，仅更新选择状态，不记录操作
-      const items = paper.project.getItems({
-        inside: this.dragSelectRect.bounds,
-        match: (item) => {
-          return (
-            !item.name?.startsWith("selection-") &&
-            !item.name?.startsWith("control-point") &&
-            item !== this.dragSelectRect
-          );
-        },
-      });
+    if (this.isDragging || this.currentAction === "scale") {
+      if (this.hasActuallyMoved) {
+        // 只有在实际发生移动或缩放时才记录操作
+        const modifications = this.selectedItems.map((item) => ({
+          id: item.data.id,
+          oldState: this.originalStates.get(item.data.id),
+          newState: item.exportJSON({ asString: false }),
+        }));
 
-      items.forEach((item) => {
-        if (!this.selectedItems.includes(item)) {
-          this.selectedItems.push(item);
-        }
-      });
-
-      this.dragSelectRect.remove();
-      this.dragSelectRect = null;
-
-      if (this.selectedItems.length > 0) {
-        this.highlightUI.show(this.selectedItems);
+        this.canvas.saveOperation({
+          type: "modify",
+          modifications: modifications,
+        });
       }
-    } else if (
-      (this.isDragging || this.currentAction === "scale") &&
-      this.hasActuallyMoved
-    ) {
-      // 只有在实际发生移动或缩放时才记录操作
-      const modifications = this.selectedItems.map((item) => ({
-        id: item.data.id,
-        oldState: this.originalStates.get(item.data.id),
-        newState: item.exportJSON({ asString: false }),
-      }));
-
-      this.canvas.saveOperation({
-        type: "modify",
-        modifications: modifications,
-      });
     }
 
     this.isDragging = false;
