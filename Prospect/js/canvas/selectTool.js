@@ -49,7 +49,20 @@ export class SelectTool {
     });
 
     if (hitResult) {
-      // 如果点击了已选中的对象或选择框，进入移动模式
+      // 如果点击了已选中的对象或选择框
+      if (
+        event.modifiers.shift &&
+        this.selectedItems.includes(hitResult.item)
+      ) {
+        // 如果按住shift并点击已选中的对象，则取消选择该对象
+        this.removeFromSelection(hitResult.item);
+        if (this.selectedItems.length > 0) {
+          this.highlightUI.update(this.selectedItems);
+        }
+        return;
+      }
+
+      // 其他情况保持原有的移动逻辑
       this.currentAction = "move";
       this.dragStartPoint = event.point;
       this.isDragging = true;
